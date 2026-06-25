@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from datetime import date, datetime
 
@@ -9,6 +10,8 @@ DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL")
 
 COLOR_GREEN = 0x00AA55
 COLOR_RED = 0xCC4444
+COLOR_GOLD = 0xD4AF37
+COLOR_BLUE = 0x3399FF
 
 def get_daily_report():
     today = date.today()
@@ -124,6 +127,96 @@ def build_daily_embed(r):
     return embed
 
 
+def get_gold_price():
+    try:
+        r = requests.get("https://webgia.com/gia-vang/", timeout=15)
+        r.raise_for_status()
+        html = r.text
+        gold_list = []
+        for m in re.finditer(
+            r'<td><a[^>]*><strong>(SJC|PNJ|DOJI)</strong></a></td>\s*'
+            r'<td[^>]*>([\d.]+)</td>\s*'
+            r'<td[^>]*>([\d.]+)</td>',
+            html,
+        ):
+            buy = int(m.group(2).replace(".", ""))
+            sell = int(m.group(3).replace(".", ""))
+            gold_list.append({"name": m.group(1), "buy": buy, "sell": sell})
+        if not gold_list:
+            print("No gold prices found in webgia.com")
+            return None
+        return gold_list
+    except Exception as e:
+        print(f"Gold price scrape error: {e}")
+        return None
+
+
+def get_hcm_weather():
+    try:
+        r = requests.get("https://wttr.in/Ho+Chi+Minh?format=j1", timeout=15)
+        r.raise_for_status()
+        d = r.json()
+        cc = d["current_condition"][0]
+        astro = d["weather"][0]["astronomy"][0]
+        forecast = d["weather"][1] if len(d["weather"]) > 1 else d["weather"][0]
+        return {
+            "temp": cc["temp_C"],
+            "feels": cc["FeelsLikeC"],
+            "humidity": cc["humidity"],
+            "wind": cc["windspeedKmph"],
+            "condition": cc["weatherDesc"][0]["value"],
+            "uv": cc["uvIndex"],
+            "sunrise": astro["sunrise"],
+            "sunset": astro["sunset"],
+            "tomorrow": forecast.get("date", ""),
+            "tomorrow_temp_max": forecast.get("maxtempC", ""),
+            "tomorrow_temp_min": forecast.get("mintempC", ""),
+        }
+    except Exception as e:
+        print(f"Weather API error: {e}")
+        return None
+
+
+def build_gold_embed(gold_list):
+    lines = []
+    for g in gold_list:
+        lines.append(
+            f"**{g['name']}**  "
+            f"Mua **{g['buy']:,}**₫  —  "
+            f"Bán **{g['sell']:,}**₫"
+        )
+    fields = [
+        {"name": "🏦 Giá vàng trong nước (đ/lượng)", "value": "\n".join(lines), "inline": False},
+    ]
+    return {
+        "title": "💰 GIÁ VÀNG HÔM NAY",
+        "color": COLOR_GOLD,
+        "fields": fields,
+        "footer": {"text": "webgia.com • " + datetime.now().strftime("%H:%M %d/%m/%Y")},
+    }
+
+
+def build_weather_embed(w):
+    fields = [
+        {"name": "🌡️ Nhiệt độ", "value": f"**{w['temp']}°C** (cảm giác {w['feels']}°C)", "inline": True},
+        {"name": "💧 Độ ẩm", "value": f"**{w['humidity']}%**", "inline": True},
+        {"name": "🌬️ Gió", "value": f"**{w['wind']}** km/h", "inline": True},
+        {"name": "☀️ UV", "value": f"Chỉ số: **{w['uv']}**", "inline": True},
+        {"name": "🌅 Mặt trời", "value": f"Mọc **{w['sunrise']}** • Lặn **{w['sunset']}**", "inline": True},
+        {"name": "\u200b", "value": "\u200b", "inline": True},
+        {"name": "📅 Ngày mai", "value": (
+            f"Cao nhất **{w['tomorrow_temp_max']}°C** – "
+            f"Thấp nhất **{w['tomorrow_temp_min']}°C**"
+        ), "inline": False},
+    ]
+    return {
+        "title": f"🌤️ THỜI TIẾT TP. HCM — {w['condition']}",
+        "color": COLOR_BLUE,
+        "fields": fields,
+        "footer": {"text": "wttr.in • " + datetime.now().strftime("%H:%M %d/%m/%Y")},
+    }
+
+
 def send_discord(embeds: list):
     if not DISCORD_WEBHOOK:
         print("FATAL: DISCORD_WEBHOOK_URL not set")
@@ -139,8 +232,23 @@ def main():
     print("Building daily lunar calendar...")
     report = get_daily_report()
     daily_embed = build_daily_embed(report)
-    send_discord([daily_embed])
-    print("Sent daily report to Discord ✓")
+
+    embeds = [daily_embed]
+
+    gold = get_gold_price()
+    if gold:
+        embeds.append(build_gold_embed(gold))
+    else:
+        print("Skipping gold price (unavailable)")
+
+    weather = get_hcm_weather()
+    if weather:
+        embeds.append(build_weather_embed(weather))
+    else:
+        print("Skipping weather (unavailable)")
+
+    send_discord(embeds)
+    print(f"Sent {len(embeds)} embed(s) to Discord ✓")
 
 
 if __name__ == "__main__":
