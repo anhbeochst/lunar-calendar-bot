@@ -25,6 +25,4 @@ jobs:
       - name: Build & send report
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_LUNAR }}
-          BIRTH_DATE_1: 1/1/1997 0
-          BIRTH_DATE_2: 28/3/1996 10
         run: python src/bot.py
