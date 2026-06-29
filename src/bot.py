@@ -140,45 +140,48 @@ GOLD_BTMC = (
 UA = {"User-Agent": "Mozilla/5.0 (lunar-calendar-bot)"}
 
 
+def _gold_webgia():
+    r = requests.get("https://webgia.com/gia-vang/", headers=UA, timeout=15)
+    r.raise_for_status()
+    out = []
+    for m in re.finditer(
+        r"<td><a[^>]*><strong>(SJC|PNJ|DOJI)</strong></a></td>\s*"
+        r"<td[^>]*>([\d.]+)</td>\s*"
+        r"<td[^>]*>([\d.]+)</td>",
+        r.text,
+    ):
+        buy = int(m.group(2).replace(".", ""))
+        sell = int(m.group(3).replace(".", ""))
+        out.append({"name": m.group(1), "buy": buy, "sell": sell})
+    return out
+
+
+def _gold_btmc():
+    d = requests.get(GOLD_BTMC, headers=UA, timeout=8).json()
+    out = []
+    for r in d.get("DataList", {}).get("Data", []):
+        i = r.get("@row")
+        name = (r.get(f"@n_{i}") or "").strip()
+        try:
+            buy, sell = int(r.get(f"@pb_{i}", 0)), int(r.get(f"@ps_{i}", 0))
+        except (TypeError, ValueError):
+            continue
+        if sell > 0 and name:
+            out.append({"name": name, "buy": buy, "sell": sell})
+    return out[:5]
+
+
 def get_gold_price():
-    """Trả (list, nguồn). Nguồn chính: BTMC API (JSON ổn định); dự phòng: scrape webgia."""
-    # 1) BTMC API
-    try:
-        d = requests.get(GOLD_BTMC, headers=UA, timeout=15).json()
-        rows = d.get("DataList", {}).get("Data", [])
-        out = []
-        for r in rows:
-            i = r.get("@row")
-            name = (r.get(f"@n_{i}") or "").strip()
-            try:
-                buy, sell = int(r.get(f"@pb_{i}", 0)), int(r.get(f"@ps_{i}", 0))
-            except (TypeError, ValueError):
-                continue
-            if sell > 0 and name:
-                out.append({"name": name, "buy": buy, "sell": sell})
-        if out:
-            return out[:5], "BTMC"
-    except Exception as e:
-        print(f"BTMC gold error: {e}")
-    # 2) Dự phòng: scrape webgia.com (kèm User-Agent)
-    try:
-        r = requests.get("https://webgia.com/gia-vang/", headers=UA, timeout=15)
-        r.raise_for_status()
-        gold_list = []
-        for m in re.finditer(
-            r"<td><a[^>]*><strong>(SJC|PNJ|DOJI)</strong></a></td>\s*"
-            r"<td[^>]*>([\d.]+)</td>\s*"
-            r"<td[^>]*>([\d.]+)</td>",
-            r.text,
-        ):
-            buy = int(m.group(2).replace(".", ""))
-            sell = int(m.group(3).replace(".", ""))
-            gold_list.append({"name": m.group(1), "buy": buy, "sell": sell})
-        if gold_list:
-            return gold_list, "webgia.com"
-        print("No gold prices found in webgia.com")
-    except Exception as e:
-        print(f"webgia gold error: {e}")
+    """Trả (list, nguồn). webgia chính (chạy được trên GitHub runner); BTMC dự phòng
+    (JSON ổn hơn nhưng server VN hay timeout từ cloud)."""
+    for name, fn in [("webgia.com", _gold_webgia), ("BTMC", _gold_btmc)]:
+        try:
+            out = fn()
+            if out:
+                return out, name
+            print(f"{name}: không có dữ liệu vàng")
+        except Exception as e:
+            print(f"{name} gold error: {e}")
     return None, None
 
 
